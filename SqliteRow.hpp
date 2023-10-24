@@ -4,7 +4,7 @@
 #include <string>
 #include <unordered_map>
 
-namespace finlytics::model {
+namespace sqlitecpp {
 
 class SqliteRow
 {
@@ -40,6 +40,8 @@ public:
 
 private:
     std::unordered_map<std::string, std::optional<std::string>> cells_;
+
+    void guardColumnExists(const std::string& column_name) const;
 };
 
 }// namespace finlytics::model

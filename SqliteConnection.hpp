@@ -5,19 +5,19 @@
 #include <string>
 #include <utility>
 
-#include <sqlite3.h>
-#include "Model/DataRule/DataRule.hpp"
 #include "SqliteRow.hpp"
 
-namespace finlytics::model {
+class sqlite3;
+
+namespace sqlitecpp {
 
 class SqliteConnection
 {
 public:
-    SqliteConnection();
+    SqliteConnection(const std::string& db_path);
     virtual ~SqliteConnection();
 
-    std::vector<SqliteRow> select(const std::string& query);
+    std::vector<SqliteRow> selectStarFromTable(const std::string& table) const;
 
 private:
     sqlite3* database_ = nullptr;

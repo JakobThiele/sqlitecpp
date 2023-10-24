@@ -1,22 +1,22 @@
 #include "SqliteConnection.hpp"
 
-#include "SqliteDataSourceException.hpp"
+#include <numeric>
+
+#include <sqlite3.h>
+
+#include "SqliteException.hpp"
 #include "SqliteRow.hpp"
-#include "db.h"
 
-namespace finlytics::model {
+namespace sqlitecpp {
 
-SqliteConnection::SqliteConnection()
+SqliteConnection::SqliteConnection(const std::string& db_path)
 {
-    if (sqlite3_open(":memory:", &database_) != SQLITE_OK) {
-        throw exception::SqliteDataSourceException("Could not open database");
-    }
+    int      rc;
 
-    if (sqlite3_deserialize(database_, "main", finlytics_db, finlytics_db_len, finlytics_db_len, SQLITE_DESERIALIZE_RESIZEABLE) !=
-        SQLITE_OK) {
-        std::string error_message = "Failed to deserialize SQLite database: ";
-        error_message += sqlite3_errmsg(database_);
-        throw exception::SqliteDataSourceException(error_message);
+    rc = sqlite3_open(db_path.c_str(), &database_);
+    if (rc) {
+        fprintf(stderr, "Can't open database: %s\n", sqlite3_errmsg(database_));
+        sqlite3_close(database_);
     }
 }
 
@@ -27,8 +27,10 @@ SqliteConnection::~SqliteConnection()
     }
 }
 
-std::vector<SqliteRow> SqliteConnection::select(const std::string& query)
+std::vector<SqliteRow> SqliteConnection::selectStarFromTable(const std::string& table) const
 {
+    std::string query = "SELECT * FROM " + table;
+
     std::vector<SqliteRow> rows;
 
     char* error_message;
@@ -60,7 +62,7 @@ std::vector<SqliteRow> SqliteConnection::select(const std::string& query)
     if (response_code != SQLITE_OK) {
         std::string exception_message = "Error querying database: ";
         exception_message += error_message;
-        throw exception::SqliteDataSourceException(exception_message);
+        throw exception::SqliteException(exception_message);
     }
 
     if (error_message) {
