@@ -2,7 +2,7 @@
 
 #include <numeric>
 
-#include <sqlite3.h>
+#include <sqlite/sqlite3.h>
 
 #include "SqliteException.hpp"
 #include "SqliteRow.hpp"
@@ -11,7 +11,7 @@ namespace sqlitecpp {
 
 SqliteConnection::SqliteConnection(const std::string& db_path)
 {
-    int      rc;
+    int rc;
 
     rc = sqlite3_open(db_path.c_str(), &database_);
     if (rc) {
@@ -72,4 +72,65 @@ std::vector<SqliteRow> SqliteConnection::selectStarFromTable(const std::string& 
     return rows;
 }
 
-}// namespace finlytics::model
+void SqliteConnection::upsert(const std::string& table, const std::map<std::string, SqliteData>& column_to_data)
+{
+    if (column_to_data.empty()) {
+        throw exception::SqliteException("Cannot upsert empty data");
+    }
+
+    std::string query  = "INSERT OR REPLACE INTO " + table + " (";
+    std::string values = "VALUES (";
+
+    for (const auto& [column, data] : column_to_data) {
+        query += (column + ", ");
+        values += "?, ";
+    }
+
+    query.erase(query.size() -2);
+    values.erase(values.size() -2);
+
+    query += ") " + values + ")";
+
+    sqlite3_stmt* statement;
+    auto preparation_result = sqlite3_prepare_v2(database_, query.c_str(), -1, &statement, nullptr);
+
+    int param_index = 1;
+    for (const auto& [column, data] : column_to_data) {
+        if (std::holds_alternative<int>(data)) {
+            sqlite3_bind_int(statement, param_index, std::get<int>(data));
+            ++param_index;
+            continue;
+        }
+
+        if (std::holds_alternative<std::string>(data)) {
+            sqlite3_bind_text(statement, param_index, std::get<std::string>(data).c_str(), -1, SQLITE_STATIC);
+            ++param_index;
+            continue;
+        }
+
+        if (std::holds_alternative<nullptr_t>(data)) {
+            sqlite3_bind_null(statement, param_index);
+            ++param_index;
+            continue;
+        }
+
+        throw exception::SqliteException("Invalid data type");
+    }
+
+//    const char* expandedSql = sqlite3_expanded_sql(statement);
+//    if (expandedSql) {
+//        std::string success = expandedSql;
+//        sqlite3_free((void*)expandedSql); // Free the allocated memory
+//    } else {
+//        std::string error = "Could not retrieve expanded SQL.";
+//    }
+
+    int result = sqlite3_step(statement);
+    sqlite3_finalize(statement);
+
+    if (result != SQLITE_DONE) {
+        throw exception::SqliteException("Error upserting data");
+    }
+}
+
+}// namespace sqlitecpp
