@@ -8,8 +8,9 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 set(SOURCE_FILES
-    src/SqliteConnection.cpp
+    src/SqliteCpp.cpp
     src/SqliteRow.cpp
+    src/Migration.cpp
     ${CMAKE_CURRENT_LIST_DIR}/sqlite/sqlite3.c
 )
 
