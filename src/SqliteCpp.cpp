@@ -1,6 +1,6 @@
 #include "SqliteCpp.hpp"
 
-#include "sqlite3.h"
+#include "../sqlite/sqlite3.h"//todo: fix once the other sqlite thingy is gone :D
 
 #include "SqliteException.hpp"
 #include "SqliteRow.hpp"
@@ -56,12 +56,21 @@ SqliteCpp::~SqliteCpp()
 
 void SqliteCpp::runMigrations(const std::vector<Migration>& migrations)
 {
-    if (!tableExists(MIGRATIONS_TABLE)) {
-        createMigrationsTable();
-    }
+    try {
+        beginTransaction();
 
-    for (const auto& migration : migrations) {
-        runMigration(migration);
+        if (!tableExists(MIGRATIONS_TABLE)) {
+            createMigrationsTable();
+        }
+
+        for (const auto& migration : migrations) {
+            runMigration(migration);
+        }
+
+        commit();
+    } catch (exception::SqliteException& e) {
+        rollback();
+        throw e;
     }
 }
 
@@ -106,6 +115,79 @@ std::vector<SqliteRow> SqliteCpp::selectStarFromTable(const std::string& table) 
     if (error_message) {
         sqlite3_free(error_message);
     }
+
+    return rows;
+}
+
+std::vector<SqliteRow> SqliteCpp::selectFromTableWhere(
+    const std::string&                       table,
+    const std::vector<std::string>&          columns,
+    const std::map<std::string, SqliteData>& where_clauses) const
+{
+    std::string query = "SELECT ";
+    for (const auto& column : columns) {
+        query += column + ", ";
+    }
+    query.erase(query.size() - 2);
+    query += " FROM " + table;
+
+    if (!where_clauses.empty()) {
+        query += " WHERE ";
+
+        for (const auto& where_clause : where_clauses) {
+            query += where_clause.first + " = ? AND ";
+        }
+        query.erase(query.size() - 5);
+    }
+
+    sqlite3_stmt* statement;
+    auto          preparation_result = sqlite3_prepare_v2(database_, query.c_str(), -1, &statement, nullptr);
+
+    int param_index = 1;
+    for (const auto& [column, data] : where_clauses) {
+        if (std::holds_alternative<int>(data)) {
+            sqlite3_bind_int(statement, param_index, std::get<int>(data));
+            ++param_index;
+            continue;
+        }
+
+        if (std::holds_alternative<std::string>(data)) {
+            sqlite3_bind_text(statement, param_index, std::get<std::string>(data).c_str(), -1, SQLITE_STATIC);
+            ++param_index;
+            continue;
+        }
+
+        if (std::holds_alternative<nullptr_t>(data)) {
+            sqlite3_bind_null(statement, param_index);
+            ++param_index;
+            continue;
+        }
+
+        throw exception::SqliteException("Invalid data type");
+    }
+    std::vector<SqliteRow> rows;
+
+    // Execute the statement and process the results
+    while (sqlite3_step(statement) == SQLITE_ROW) {
+        SqliteRow row;
+
+        // Iterate over each column in the result row
+        for (int i = 0; i < sqlite3_column_count(statement); ++i) {
+            std::optional<std::string> cell_content;
+            auto                       column_name = std::string(sqlite3_column_name(statement, i));
+
+            if (sqlite3_column_type(statement, i) != SQLITE_NULL) {
+                cell_content = std::string(reinterpret_cast<const char*>(sqlite3_column_text(statement, i)));
+            }
+
+            row.add(column_name, cell_content);
+        }
+
+        rows.emplace_back(std::move(row));
+    }
+
+    // Finalize the statement to avoid resource leaks
+    sqlite3_finalize(statement);
 
     return rows;
 }
@@ -171,6 +253,53 @@ void SqliteCpp::upsert(const std::string& table, const std::map<std::string, Sql
     }
 }
 
+void SqliteCpp::deleteFrom(const std::string& table, const std::map<std::string, SqliteData>& where_clauses)
+{
+    if (where_clauses.empty()) {
+        throw exception::SqliteException("Cannot delete without where clauses");
+    }
+
+    std::string query = "DELETE FROM " + table + " WHERE ";
+    for (const auto& where_clause : where_clauses) {
+        query += where_clause.first + " = ? AND ";
+    }
+
+    query.erase(query.size() - 5);
+
+    sqlite3_stmt* statement;
+    auto          preparation_result = sqlite3_prepare_v2(database_, query.c_str(), -1, &statement, nullptr);
+
+    int param_index = 1;
+    for (const auto& [column, data] : where_clauses) {
+        if (std::holds_alternative<int>(data)) {
+            sqlite3_bind_int(statement, param_index, std::get<int>(data));
+            ++param_index;
+            continue;
+        }
+
+        if (std::holds_alternative<std::string>(data)) {
+            sqlite3_bind_text(statement, param_index, std::get<std::string>(data).c_str(), -1, SQLITE_STATIC);
+            ++param_index;
+            continue;
+        }
+
+        if (std::holds_alternative<nullptr_t>(data)) {
+            sqlite3_bind_null(statement, param_index);
+            ++param_index;
+            continue;
+        }
+
+        throw exception::SqliteException("Invalid data type");
+    }
+
+    int result = sqlite3_step(statement);
+    sqlite3_finalize(statement);
+
+    if (result != SQLITE_DONE) {
+        throw exception::SqliteException("Error upserting data");
+    }
+}
+
 bool SqliteCpp::tableExists(const std::string& tableName) const
 {
     std::string   sql = "SELECT name FROM sqlite_master WHERE type='table' AND name=?;";
@@ -216,7 +345,7 @@ void SqliteCpp::createMigrationsTable()
 void SqliteCpp::runMigration(const Migration& migration)
 {
     const auto& rows = selectStarFromTable(MIGRATIONS_TABLE);
-    for (const auto& row: rows) {
+    for (const auto& row : rows) {
         if (row.get<std::string>("title") == migration.getTitle()) {
             return;
         }
@@ -238,6 +367,36 @@ void SqliteCpp::runMigration(const Migration& migration)
         std::string errorStr(errorMessage);
         sqlite3_free(errorMessage);
         throw exception::SqliteException("SQL execution failed: " + errorStr);
+    }
+}
+
+void SqliteCpp::beginTransaction()
+{
+    char* errMsg = nullptr;
+    if (sqlite3_exec(database_, "BEGIN TRANSACTION;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+        std::string errorStr = errMsg;
+        sqlite3_free(errMsg);
+        throw exception::SqliteException("Failed to begin transaction: " + errorStr);
+    }
+}
+
+void SqliteCpp::rollback()
+{
+    char* errMsg = nullptr;
+    if (sqlite3_exec(database_, "ROLLBACK;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+        std::string errorStr = errMsg;
+        sqlite3_free(errMsg);
+        throw exception::SqliteException("Failed to begin transaction: " + errorStr);
+    }
+}
+
+void SqliteCpp::commit()
+{
+    char* errMsg = nullptr;
+    if (sqlite3_exec(database_, "COMMIT;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+        std::string errorStr = errMsg;
+        sqlite3_free(errMsg);
+        throw exception::SqliteException("Failed to begin transaction: " + errorStr);
     }
 }
 
