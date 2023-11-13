@@ -1,5 +1,7 @@
 #include "SqliteCpp.hpp"
 
+#include <iostream>
+
 #include "../sqlite/sqlite3.h"//todo: fix once the other sqlite thingy is gone :D
 
 #include "SqliteException.hpp"
@@ -29,6 +31,16 @@ SqliteCpp::SqliteCpp(const std::filesystem::path& db_path)
         fprintf(stderr, "Can't open database: %s\n", sqlite3_errmsg(database_));
         sqlite3_close(database_);
         throw exception::SqliteException("Could not open database");
+    }
+
+    // Enable foreign key constraints
+    char* errmsg;
+    rc = sqlite3_exec(database_, "PRAGMA foreign_keys = ON;", nullptr, nullptr, &errmsg);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error: %s\n", errmsg);
+        sqlite3_free(errmsg);
+        sqlite3_close(database_);
+        throw exception::SqliteException("Could not enable foreign key constraints");
     }
 }
 
@@ -296,7 +308,7 @@ void SqliteCpp::deleteFrom(const std::string& table, const std::map<std::string,
     sqlite3_finalize(statement);
 
     if (result != SQLITE_DONE) {
-        throw exception::SqliteException("Error upserting data");
+        throw exception::SqliteException("Error deleting data");
     }
 }
 
