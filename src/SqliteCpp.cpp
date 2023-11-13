@@ -261,7 +261,7 @@ void SqliteCpp::upsert(const std::string& table, const std::map<std::string, Sql
     sqlite3_finalize(statement);
 
     if (result != SQLITE_DONE) {
-        throw exception::SqliteException("Error upserting data");
+        throw exception::SqliteException("Error upserting data, Error Code: " + std::to_string(result));
     }
 }
 
